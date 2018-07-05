@@ -2,33 +2,38 @@
 
 #include <RFTransmitter.h> /* Siehe https://github.com/zeitgeist87/RFTransmitter */
 
+void buttonPressedA();
+void buttonPressedB();
+
+struct BUTTON_CONFIG {  
+  /* Pin-Zuordnungen */
+  byte pinButton;
+  byte pinLed;
+  /* Flags zur Abhandlung und dem Sperren der Tasterdrücke */
+  volatile bool pressedFlag;
+  volatile bool lockedFlag;
+  /* Zeitstempel zur Sperre der Tasterdrücke */
+  unsigned long timePressed;
+  /* Nachricht, die beim Tastendruck übertragen wird */
+  byte pressedMessage[4];
+  /* Interrupt-Handler, der beim Tastendruck aufgerufen wird */
+  void (*interruptHandler)();
+};
+
+BUTTON_CONFIG buttons[2] = { {2, 5, false, false, 0, { 28, 1, 1, 51 }, buttonPressedA}, { 3, 6, false, false, 0, { 28, 2, 1, 51 }, buttonPressedB} };
+const int buttonCount = sizeof(buttons)/sizeof(BUTTON_CONFIG);
+
 /* Pin-Zuordnungen */
-const byte pinButtonA = 2;
-const byte pinLedA = 5;
-const byte pinButtonB = 3;
-const byte pinLedB = 6;
 const byte pinTransmitter = 4;
 
-/* Flags zur Abhandlung und dem Sperren der Tasterdrücke */
-volatile bool buttonPressedFlagA = false;
-volatile bool buttonPressedFlagB = false;
-volatile bool buttonLockedFlagA = false;
-volatile bool buttonLockedFlagB = false;
-
-/* Zeitstempel zur Sperre der Tasterdrücke und den Blinker */
-unsigned long timePressedA = 0;
-unsigned long timePressedB = 0;
+/* Zeitstempel für den Blinker */
 unsigned long timeLedBlinker = 0;
-
 const long buttonDelay = 5000;
 const long blinkerInterval = 500;
-
 bool blinkerState = true;
 
 const byte transmitterId = 28;
 RFTransmitter transmitter(pinTransmitter, transmitterId);
-const byte buttonPressedMessageA[5] = { 28, 1, 1, 51 };
-const byte buttonPressedMessageB[5] = { 28, 2, 1, 51 };
 
 
 void setup() {
@@ -36,18 +41,17 @@ void setup() {
   while (!Serial);
 
   Serial.println("Starting up...");
-
-  pinMode(pinLedA, OUTPUT);
-  pinMode(pinLedB, OUTPUT);
+  
   pinMode(pinTransmitter, OUTPUT);
-  pinMode(pinButtonA, INPUT_PULLUP);
-  pinMode(pinButtonB, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
-  attachInterrupt(digitalPinToInterrupt(pinButtonA), buttonPressedA, FALLING);
-  attachInterrupt(digitalPinToInterrupt(pinButtonB), buttonPressedB, FALLING);
+  
+  for (int btn=0; btn<buttonCount; btn++) {
+    pinMode(buttons[btn].pinLed, OUTPUT);
+    pinMode(buttons[btn].pinButton, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(buttons[btn].pinButton), buttons[btn].interruptHandler, FALLING);
+    digitalWrite(buttons[btn].pinLed, HIGH);
+  }
 
-  digitalWrite(pinLedA, HIGH);
-  digitalWrite(pinLedB, HIGH);
   digitalWrite(LED_BUILTIN, blinkerState);
 
   Serial.println("Board started");
@@ -56,38 +60,25 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
-  /* Pruefen, ob der A-Timer abgelaufen ist und ggf. den A-Button wieder freigeben */
-  if (buttonLockedFlagA && !buttonPressedFlagA) {
-    if (currentMillis - timePressedA > buttonDelay) {
-      digitalWrite(pinLedA, HIGH);
-      buttonLockedFlagA = false;
+  for (int btn=0; btn<buttonCount; btn++) {
+    /* Pruefen, ob der Timer abgelaufen ist und ggf. den Button wieder freigeben */
+    if (buttons[btn].lockedFlag && !buttons[btn].pressedFlag) {
+      if (currentMillis - buttons[btn].timePressed > buttonDelay) {
+        digitalWrite(buttons[btn].pinLed, HIGH);
+        buttons[btn].lockedFlag = false;
+      }
+    }
+    /* Button wurde gedrueckt (und ist nicht gesperrt) */
+    if (buttons[btn].lockedFlag && buttons[btn].pressedFlag) {
+      buttons[btn].timePressed = currentMillis;
+      digitalWrite(buttons[btn].pinLed, LOW);
+      transmitter.send((byte *)buttons[btn].pressedMessage, sizeof(buttons[btn].pressedMessage)+1);
+      Serial.print(btn);
+      Serial.println(" gedrueckt");
+      buttons[btn].pressedFlag = false;
     }
   }
-  /* A-Button wurde gedrueckt (und ist nicht gesperrt) */
-  if (buttonLockedFlagA && buttonPressedFlagA) {
-    timePressedA = currentMillis;
-    digitalWrite(pinLedA, LOW);
-    transmitter.send((byte *)buttonPressedMessageA, sizeof(buttonPressedMessageA));
-    Serial.println("A gedrueckt");
-    buttonPressedFlagA = false;
-  }
-
-  /* Pruefen, ob der B-Timer abgelaufen ist und ggf. den B-Button wieder freigeben */
-  if (buttonLockedFlagB && !buttonPressedFlagB) {
-    if (currentMillis - timePressedB > buttonDelay) {
-      digitalWrite(pinLedB, HIGH);
-      buttonLockedFlagB = false;
-    }
-  }
-  /* B-Button wurde gedrueckt (und ist nicht gesperrt) */
-  if (buttonLockedFlagB && buttonPressedFlagB) {
-    timePressedB = currentMillis;
-    digitalWrite(pinLedB, LOW);
-    transmitter.send((byte *)buttonPressedMessageB, sizeof(buttonPressedMessageB));
-    Serial.println("B gedrueckt");
-    buttonPressedFlagB = false;
-  }
-
+  
   /* LED-Status-Blinker */
   if (currentMillis - timeLedBlinker >= blinkerInterval) {
     timeLedBlinker = currentMillis;
@@ -98,15 +89,15 @@ void loop() {
 
 
 void buttonPressedA() {
-  if (!buttonLockedFlagA) {
-    buttonLockedFlagA = true;
-    buttonPressedFlagA = true;
+  if (!buttons[0].lockedFlag) {
+    buttons[0].lockedFlag = true;
+    buttons[0].pressedFlag = true;
   }
 }
 
 void buttonPressedB() {
-  if (!buttonLockedFlagB) {
-    buttonLockedFlagB = true;
-    buttonPressedFlagB = true;
+  if (!buttons[1].lockedFlag) {
+    buttons[1].lockedFlag = true;
+    buttons[1].pressedFlag = true;
   }
 }
