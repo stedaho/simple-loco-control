@@ -20,18 +20,21 @@ struct BUTTON_CONFIG {
   void (*interruptHandler)();
 };
 
-BUTTON_CONFIG buttons[2] = { {2, 5, false, false, 0, { 28, 1, 1, 51 }, buttonPressedA}, { 3, 6, false, false, 0, { 28, 2, 1, 51 }, buttonPressedB} };
+BUTTON_CONFIG buttons[2] = { 
+  {2, 5, false, false, 0, { 28, 0, 1, 82 }, buttonPressedA}, 
+  {3, 6, false, false, 0, { 28, 1, 1, 82 }, buttonPressedB}
+};
 const int buttonCount = sizeof(buttons)/sizeof(BUTTON_CONFIG);
 
-/* Pin-Zuordnungen */
-const byte pinTransmitter = 4;
+const long buttonDelay = 5000;
 
 /* Zeitstempel für den Blinker */
 unsigned long timeLedBlinker = 0;
-const long buttonDelay = 5000;
 const long blinkerInterval = 500;
 bool blinkerState = true;
 
+/* Transmitter-Einstellungen */
+const byte pinTransmitter = 4;
 const byte transmitterId = 28;
 RFTransmitter transmitter(pinTransmitter, transmitterId);
 
@@ -40,7 +43,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
 
-  Serial.println("Starting up...");
+  Serial.println("Slave starting up...");
   
   pinMode(pinTransmitter, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -54,7 +57,7 @@ void setup() {
 
   digitalWrite(LED_BUILTIN, blinkerState);
 
-  Serial.println("Board started");
+  Serial.println("Slave started");
 }
 
 void loop() {
@@ -72,7 +75,8 @@ void loop() {
     if (buttons[btn].lockedFlag && buttons[btn].pressedFlag) {
       buttons[btn].timePressed = currentMillis;
       digitalWrite(buttons[btn].pinLed, LOW);
-      transmitter.send((byte *)buttons[btn].pressedMessage, sizeof(buttons[btn].pressedMessage)+1);
+      transmitter.send((byte *)buttons[btn].pressedMessage, sizeof(buttons[btn].pressedMessage));
+      Serial.print("Button ");
       Serial.print(btn);
       Serial.println(" gedrueckt");
       buttons[btn].pressedFlag = false;
